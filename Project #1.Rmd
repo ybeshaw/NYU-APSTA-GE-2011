@@ -1,0 +1,299 @@
+---
+title: APSTA-GE 2011. Proj. \#1
+author: "January 2025: Yael Beshaw"
+output:
+  pdf_document: default
+  word_document: default
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,tidy=TRUE)
+knitr::opts_knit$set(root.dir = "~/Downloads")
+```
+
+```{r libs,include=TRUE, message= FALSE, warning=FALSE}
+#likely useful libraries and initial seed set.
+library(cluster)
+library(foreign)
+library(gtools) 
+library(NbClust)
+library(ggplot2)
+library(foreign)
+library(haven)
+library(caret)
+library(klaR)
+library(ggdendro)
+library(GGally)
+library(knitr)
+library(gridExtra)
+library(factoextra)
+library(tibble)
+library(phyclust)
+
+set.seed(2011)
+```
+
+```{r helper-0, include=T, echo=F,warning=F}
+require(gtools)
+optLabel <- function(src,trg) {
+    #input two sets of labels, find permuation that maximizes agreement
+    #to be complete search, and handle simpler diag eval, trg must have larger
+    # of labels
+    n1 <- length(unique(src))
+    n2 <- length(unique(trg))
+    if (n1>n2) {
+        optRslt <- optLabel(trg,src)
+        optRslt$best.tbl <- t(optRslt$best.tbl)
+        optRslt$match.by="rows"
+        return(optRslt)
+    }
+    tbl <- xtabs(~src+trg)
+    best.match <- sum(diag(tbl)) #still works for a non-square matrix.
+    best.perm <- 1:n2
+    allPerms <- gtools::permutations(n2,n2)
+    for (i in 1:dim(allPerms)[1]) {
+        cur.match <- sum(diag(tbl[,allPerms[i,]]))
+        if (cur.match>best.match) {
+            best.match <- cur.match
+            best.perm <- allPerms[i,]
+        }
+    }
+    list(match.by="cols",best.match=best.match,best.perm=best.perm,
+         best.tbl=tbl[,best.perm])
+}
+```
+
+The objective of a cluster analysis is knowledge discovery -- somehow,
+by identifying groups in the data, you learn something interesting about
+the substantive area being explored.
+
+You will look for potential clusters in the Australian Leptograpsus
+Crabs data. As you know from the handouts, 200 crab specimens were
+collected at Fremantle, Western Australia in the mid-1970s (Campbell and
+Mahon, 1974). Each specimen has measurements on: frontal lip (FL), rear
+width (RW), length of midline of the carapace (CL), maximum width of
+carapace (CW), and body depth (BD), all in millimeters.
+
+```{r, echo=T}
+crabs <- read_dta("/Users/yaelbeshaw/Downloads/crabs.dta")
+```
+
+You also know the sex and species of these crabs -- these are the
+demographics you will explore *after* clustering.
+
+We have sometimes referred to this as classifying "blindly" since you
+don't know the labels, but you assess your clustering in part by its
+ability to separate crabs in a manner consistent with those labels.
+
+#Q1. 
+
+First, explore the five features using bivariate plots. You should
+explore the need to transform or rescale the measurements. Make a
+recommendation based on those bivariate plots.
+
+```{r, include=TRUE}
+pairs(crabs[, 4:8], 
+      main = "Q1: Bivariate Scatterplots for Crabs")
+```
+```{r}
+# exploring transforrmations and rescaling
+summary(crabs[, c(4:8)])
+```
+Based on the bivariate plot and assessing the summary statistics, I would 
+recommend re-scaling the measurements. We see that the variables are on 
+different scales with varying ranges of their minimums and maximums. We see this
+reflected in the bivariate scatterplots as each plot is on a different scale,
+making it quite difficult for us to be able to properly compare and make
+accurate assesments about what we see.
+
+
+*After making your assessment, in order to save time, we have decided*
+*(for you) that you should standardize the measurements (the usual*
+*z-score transform). The simplest way to standardize is to make a NEW*
+*crabs dataframe as follows:*
+
+```{r, echo=T, include=T}
+crabs.stdz <- crabs;crabs.stdz[,4:8] <- scale(crabs[,4:8])
+```
+From this point forward, we use crabs.stdz in our analysis (not crabs).
+
+#Q2. 
+
+You should also examine bivariate plots using principal components on the 
+standardized version of the data, as these might reveal the clusters better. 
+Do the actual clustering on the raw (standardized) measures, not the principal 
+components.
+
+If you see fairly well separated clusters, particularly if they are 'stringy,' 
+you can use single linkage hierarchical clustering; otherwise, use centroid 
+linkage [justify your choice in your writeup, but only choose ONE method].
+
+```{r, include=TRUE}
+#Examine bivariate plots using principal components on the standardized version
+pc.crabs <- princomp(crabs.stdz, cor = TRUE)$scores
+pairs(pc.crabs[, 1:3], col = 1,
+      main = "Q2: Bivariate Scatterplots for Standardized PCA")
+```
+Based on the results of the bivariate plots using principal components
+on the standardized version of the data, we see that single linkage hierarchical
+clustering is the best method to implement here. We see very distinct and 
+"stringy" clusters on the first three PCA's.
+
+
+We will assume that Euclidean distance (not squared, also known as $L_2$
+norm) is appropriate for these data.
+```{r}
+# Single Linkage Hierarchical Clustering
+
+#Euclidean distance
+crabs.stdz_dist <- dist(crabs.stdz, method = "euclidean")
+
+#single linkage hierarchical clustering
+hcl.crabz <- hclust(crabs.stdz_dist,meth='single')
+```
+
+#Q3. 
+
+Choose the number of clusters (you think provide good separation
+between groups and homogeneity within) by *examining the dendrogram* and
+evaluating several alternative 'cut points' for the number of clusters.
+
+```{r, include=TRUE}
+#dendrogram
+plot(hcl.crabz,
+     main= "Q2: Single Linkage Dendrogram",
+     xlab= "Crabs",
+     sub = "Euclidean Distance")
+```
+Based on the dendogram, it seems that three clusters is a good cut off point.
+This is due to the large heights we observe between potential clusters
+until we get past the third "row".
+
+```{r}
+# evaluating alternative cutpoints for the number of clusters
+factoextra::fviz_cluster(list(data=crabs.stdz, cluster=cutree(hcl.crabz,3)),
+                         choose.vars=c(4:8),main="Single Linkage, 3 Clusters")
+
+factoextra::fviz_cluster(list(data=crabs.stdz, cluster=cutree(hcl.crabz,5)),
+                         choose.vars=c(4:8),main="Single Linkage, 5 Clusters")
+
+factoextra::fviz_cluster(list(data=crabs.stdz, cluster=cutree(hcl.crabz,10)),
+                         choose.vars=c(4:8),main="Single Linkage, 10 Clusters")
+```
+
+#Q4. 
+
+Now, determine the optimal number of clusters based on a criterion:
+compute the ratio C(g)=($\Sigma$msb)/($\Sigma$msw) and choose the g such
+that C(g) is maximized (DISPLAY YOUR RESULTS IN A TABLE OR PLOT). We
+will use package, NbClust, which will compute C(g) - as index 'ch'.
+
+```{r, include=TRUE}
+# compute the ratio
+optimal.crabz <- NbClust(crabs.stdz, min.nc = 2, max.nc = 10, 
+                         method = "single",index = "ch")
+#table of C(g) results
+cg_index <- optimal.crabz[["All.index"]]
+cg_table <- data.frame(Cluster= 2:10, Value = cg_index)
+cg_table<- as_tibble(cg_table)
+cg_table
+
+#table of Parition Results
+partition_single <- optimal.crabz[["Best.partition"]]
+table(partition_single)
+
+
+#plot Partition Results as Frequency
+hist(partition_single,
+     main= "Frequency of Partition Assignment by Cluster",
+     xlab= "Cluster Group",
+     )
+```
+Based on the criterion and utilizing single linkage clustering, the optimal
+number of clusters is 10 as it has the greatest index value of 10.0618.
+
+#Q5. 
+
+As a comparison approach, redo the analysis using k-means
+clustering. To be consistent use the NbClust package, and extract the
+`Best.partition` for the result. Use NbClust to SEARCH FOR optimal
+number of clusters for this method, again determined by C(g).
+
+```{r, include=TRUE}
+optimal.crabz_kmeans <- NbClust(crabs.stdz, min.nc = 2, max.nc = 10, 
+                         method = "kmeans",index = "ch")
+#table of C(g) rresults
+cg_index_kmeans <- optimal.crabz_kmeans[["All.index"]]
+cg_table_kmeans <- data.frame(Cluster= 2:10, Value = cg_index_kmeans)
+cg_table_kmeans<- as_tibble(cg_table_kmeans)
+cg_table_kmeans
+
+#table of Parition Results
+partition_kmeans <- optimal.crabz_kmeans[["Best.partition"]]
+table(partition_kmeans)
+
+
+#plot Partition Results as Frequency
+hist(partition_kmeans,
+     main= "Frequency of Partition Assignment by Cluster",
+     xlab= "Cluster Group",
+     )
+```
+Based on the criterion and utilizing kmeans clustering, the optimal
+number of clusters is 9 as it has the greatest index value of 1187.3938.
+
+#Q6. 
+
+Compare the results from these last two methods, e.g., optimal using
+C(g) and centroid or single linkage depending on your prior choice and
+the optimal k-means result.
+
+i)  Use a crosstab comparison.
+
+```{r, include=TRUE}
+#optimal single
+crabz_single.10 <- cutree(hclust(crabs.stdz_dist,meth='single'),10)
+
+#optimal kmeans
+crabz_kmeans.9 <- kmeans(crabs.stdz, 9)
+
+#compare
+compare <- xtabs(~crabz_single.10 + crabz_kmeans.9$cluster)
+compare
+```
+
+ii) State the maximal agreement between methods (and justify using the
+    crosstab).
+
+```{r}
+rand_index <- phyclust::RRand(crabz_single.10, crabz_kmeans.9$cluster)
+rand_index
+```
+
+The agreement between the methods is low with Rand at 0.377 and adjRand at 
+0.009. This indicates that while there is some agreement, once we adjust, there
+is almost no agreement between these methods.
+
+iii) Evaluate the distribution of the known demographics (sex, species)
+     for the k-means cluster solution (you can use a crosstab here as
+     well). Do the clusters seem to divide in a manner consistent with
+     demographic differences? Justify your answer by comparing the
+     frequency distribution of demographics within each cluster.
+
+```{r, include=TRUE}
+#compare sex and species
+crabs$kmeans_cluster <- crabz_kmeans.9$cluster
+
+sex_compare <- xtabs(~ sex + kmeans_cluster, data = crabs)
+sex_compare
+
+species_compare <- xtabs(~ species + kmeans_cluster, data = crabs)
+species_compare
+```
+The clusters seem to divide in a way consistent with the differences. There
+is an even split across the board in sex and species which is also seen in the
+frequency distribution of the variables.
+
