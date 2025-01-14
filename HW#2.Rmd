@@ -1,30 +1,75 @@
 ---
-title: "ASPTA GE 2011 HW#2"
-author: "Yael Beshaw"
-date: "2025-01-13"
-output: html_document
+title: APSTA-GE 2011. Homework \#2
+author: "January 2025: Yael Beshaw"
+output:
+  pdf_document: default
+  word_document: default
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = TRUE, include = TRUE, fig.width = 4, fig.height = 4, fig.align = "center")
+library(knitr)
+opts_chunk$set(tidy.opts=list(width.cutoff=60),tidy=TRUE)
+
+#add specific code to pre-load necessary data here:
+
 ```
 
-## R Markdown
-
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
-
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-summary(cars)
+```{r libs,include=TRUE}
+#likely useful libraries and initial seed set.
+library(caret)
+library(cluster)
+library(klaR)
+library(ggplot2)
+library(ggdendro)
+library(GGally)
+library(e1071)
+library(knitr)
+library(foreign)
+library(fpc)
+library(gridExtra)
+library(palmerpenguins)
+set.seed(2011)
 ```
 
-## Including Plots
+This assignment uses the \texttt{penguins} dataset.  The written work to hand in consists of selected output from the software package, which you should include in a PDF document as you answer the questions.
 
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
+```{r, include=TRUE}
+#code to load data here
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+You will need to understand k-means clustering and choosing the number of clusters using the Calinski-Harabasz, or C(g) criterion, discussed in Handout 2 and in class.
+
+**Q1**: Use k-means clustering (algorithm=Hartigan-Wong), finding solutions for g=2,3,4,5,6,7,8,9 groups.  ALWAYS start each clustering run by set.seed(2011) before each call to kmeans AND add this option to the call: nstart=100 (this generates 100 random starts and keeps kmeans from producing local minimum solutions). \textcolor{red}{Remember: you do not need to include the body mass measure.} [0 pts, but you must do it to proceed]
+
+```{r, include=TRUE}
+#code to solve problem here
+```
+
+**Q2**:	For each value of g, compute $C(g)=(\sum \mbox{msb})/(\sum \mbox{msw})$.  In R, use the \texttt{calinhara} function given in package \texttt{fpc}.  For this assignment, do not use the \texttt{NbClust} function in the \texttt{NbClust} R library, because it runs the kmeans fits for you, which will make it harder to generate them equivalently afterward. PLOT $C(g)$ as a function of $g$. [2pts]
+
+```{r, include=TRUE}
+#code to solve problem here
+```
+
+**Q3**:	Choose the $g$ such that $C(g)$ is maximized.  Call this variable $g_{opt}$.  [1pt]
+
+```{r, include=TRUE}
+#code to solve problem here
+```
+
+**Q4**: Compute the k-means cluster solutions using the following number of groups: $g_{opt}$, $g_{opt}+1$, and $g_{opt}+2$; compare the results using crosstabs (ignoring the $g_{opt}+1$ to $g_{opt}+2$ comparison) [1 pt each; 2 pts total] and comment on the effect of changing the number of clusters for each crosstab. [0.5pts each; 1pt total]
+
+```{r, include=TRUE}
+#code to solve problem here
+```
+
+Written answer here
+
+**Q5** Color the bivariate plot of bill depth (y axis) vs. bill length (x-axis) for each of the three solutions with $g=\{g_{opt},g_{opt}+1,g_{opt}+2\}$ and describe what changes with each solution. [1 pt ea. plot; 1 pt ea. comment; 6 pts total]
+
+```{r, include=TRUE}
+#code to solve problem here
+```
+
+Written answer here
