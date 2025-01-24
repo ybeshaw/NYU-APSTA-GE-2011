@@ -1,0 +1,660 @@
+---
+title: APSTA-GE 2011. Project \#2
+author: "January 2025: Yael Beshaw"
+output:
+  pdf_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, include = TRUE, fig.width = 4, 
+                      fig.height = 4, fig.align = "center")
+library(knitr)
+opts_chunk$set(tidy.opts=list(width.cutoff=60),tidy=TRUE)
+```
+
+```{r libs,include=TRUE, warning= FALSE, message= FALSE}
+#likely useful libraries and initial seed set.
+library(caret)
+library(cluster)
+library(NbClust)
+library(klaR)
+library(gtools) 
+library(ggplot2)
+library(ggdendro)
+library(GGally)
+library(e1071)
+library(knitr)
+library(foreign)
+library(fpc)
+library(gridExtra)
+library(LiblineaR)
+library(factoextra)
+library(tibble)
+library(phyclust)
+library(haven)
+library(dplyr)
+library(tidyverse)
+library(tidyr)
+
+set.seed(2011)
+```
+
+# Introduction and Data Description
+
+Health information refers to the data regarding your personal health including 
+information about symptoms and/or outcomes that may be relevant to you. This 
+data can come in the form of Electronic Health Records (EHR), results for lab 
+tests and more. While physicians and clinicians are being trained in how to 
+utilize these technologies, there is an increasing need for patients to be able
+to access this information in order to make personal health decisions. The 
+COVID-19 pandemic highlighted this urgency as many were forced to utilize 
+telehealth in lieu of seeing their physicians in person and relied on 
+information from the news and social media to assess their risk of getting 
+COVID-19. Now more than ever, it is imperative that healthcare, public health, 
+and public policy professionals are able to create and enact interventions that 
+address widespread and personal health concerns and outcomes. In order to do so,
+we require an understanding of how people interact with health information- 
+both personal and general.
+
+For this project, I utilize the Health Information National Trends Survey 
+(HINTS) by the National Cancer Institute. This dataset collects survey data
+regarding how people access and utilize health information, utilizing a repeated
+cross-sectional survey. I utilized the HINTS6 dataset which collected data 
+between March through November of 2022, in a two-stage design stratification 
+method. The first stage required a stratified sample of residential addresses; 
+stratified by rural versus urban and low minority versus high minority. Then, 
+one adult (U.S. citizen, 18+, non-incarcerated) was randomly selected from each 
+sampled household. Section B of this dataset specifically focuses on the use of 
+the internet for finding information. Variables in this section are measured on 
+various scales, providing insights into patterns of health-related internet 
+usage. Independent of the clustering we aim to do with Section B of this 
+dataset, we also measure demographics such as race, sex, income, education, and 
+health status for comparison. These variables allow exploration of whether the 
+clusters differ significantly based on these demographics and assess potential 
+associations between them and their cluster assignments. As such, our question 
+of interest becomes whether unsupervised machine learning methods can identify 
+distinct patterns in how individuals use the internet for health-related 
+information?
+
+# Data Exploration and Transformation
+
+## Import the Dataset of Interest
+```{r}
+hints6 <- read_sav("/Users/yaelbeshaw/R Scripts and Projects/NYU-APSTA-GE-2011/HINTS6_SPSS/hints6_public.sav")
+```
+
+## Extract HHID and Section B
+```{r}
+project_data <- hints6 |>
+  select(HHID,
+         UseInternet,
+         Internet_DialUp,
+         Internet_HighSpeed,
+         Electronic2_HealthInfo,
+         Electronic2_MessageDoc,
+         Electronic2_TestResults,
+         Electronic2_MadeAppts,
+         InternetConnection,
+         ConfidentInternetHealth,
+         HaveDevice_Tablet,
+         HaveDevice_SmartPh,
+         HaveDevice_CellPh,
+         HaveDevice_None,
+         UsedHealthWellnessApps2,
+         WearableDevTrackHealth,
+         FreqWearDevTrackHealth,
+         WillingShareData_HCP,
+         WillingShareData_Fam,
+         SharedHealthDeviceInfo,
+         SocMed_Visited,
+         SocMed_SharedPers,
+         SocMed_SharedGen,
+         SocMed_Interacted,
+         SocMed_WatchedVid,
+         MisleadingHealthInfo,
+         SocMed_MakeDecisions,
+         SocMed_DiscussHCP,
+         SocMed_TrueFalse,
+         SocMed_SameViews
+  )
+```
+
+## Explore the Data 
+```{r}
+summaries <- summary(project_data[,c(2:30)])
+```
+
+Based on this no transformations are necessary as the majority of these
+variables are binary or ordinal and these scales are between 1 to 2 and 1 to 5. 
+Standardizing would not be ideal as the standardized values would not be
+helpful in our understanding and interpretation of the data/results. The main 
+concern is omitting NAs and only including complete cases as clustering is 
+difficult to achieve with missing data. 
+
+### Complete Cases Only
+```{r}
+clean_data <- project_data |>
+  mutate(across(everything(), ~ na_if(., -9))) |>
+  mutate(across(everything(), ~ na_if(., -7))) |>
+  mutate(across(everything(), ~ na_if(., -6))) |>
+  mutate(across(everything(), ~ na_if(., -5))) |>
+  mutate(across(everything(), ~ na_if(., -4))) |>
+  mutate(across(everything(), ~ na_if(., -2))) |>
+  mutate(across(everything(), ~ na_if(., -1)))
+
+data <- clean_data[complete.cases(clean_data), ]
+```
+
+# Method
+
+Since the data I am utilizing is binary and ordinal, it may be difficult to
+use kmeans clustering as it requires distance between points. 
+This is a tool that especially useful for continuous data as there is a 
+meaningful distance between each data point. However, in order to utilize this 
+method, I utilize the binary and ordinal variables as psuedo-continuous 
+variables as there is a meaningful distance between each increase in unit. For
+the binary variables, we have 1 = selected and 2 = not selected, every unit 
+increase in my binary variables indicates a decreasing in technological 
+utilization. The same can be said for our ordinal variables scaled 1-4 or 1-5, 
+where 1 is always, every day, very confident, etc... whereas 5 reflects never 
+or no utilization.Thus, I turn these variables into numeric variables in order 
+to continue with the kmeans clustering methods. 
+
+However, after doing additional research, I found that Gower's distance
+would be helpful in cluster analysis for mixed-type objects which we have with
+the binary and ordinal variables. Therefore, in this project we will compare
+utilizing kmeans with our psuedo-continuous variables and hierarchical
+clustering using Gower's distance with our original variable types
+(binary/numeric and ordinal). Based on the sources provided below, I opted
+to utilize daisy() from the cluster package for "flexibility" in calculating
+this distance. 
+
+For hierarchical clustering, I will compare results between complete and single
+linkage across different k values. Next, for Kmeans, I will utilize the NbClust() 
+package to search for the optimal number of cluster utilizing C(g). Lastly, I 
+aim to assess the agreement between these two methods and ultimately choose the
+best method to evaluate the clusters againsttheir demographics.
+
+Sources:
+
+- https://crispinagar.github.io/blogs/gower-distance.html
+- https://www.rdocumentation.org/packages/StatMatch/versions/1.4.3/topics/gower.dist
+- https://stats.stackexchange.com/questions/349591/how-to-use-gowers-distance-with-clustering-algorithms-in-python
+- https://stats.stackexchange.com/questions/123624/gower-distance-with-r-functions-gower-dist-and-daisy 
+
+
+# Method Application and Results
+
+## Hierarchial Clustering with Gower's Distance
+
+### Adjust Variable Type
+```{r}
+# Identify the Ordinal Variables
+ordinal_columns <- c("InternetConnection", "ConfidentInternetHealth", 
+                     "FreqWearDevTrackHealth", "SocMed_Visited", 
+                     "SocMed_SharedPers", "SocMed_SharedGen", 
+                     "SocMed_Interacted", "SocMed_WatchedVid", 
+                     "MisleadingHealthInfo","SocMed_MakeDecisions", 
+                     "SocMed_DiscussHCP", "SocMed_TrueFalse", 
+                     "SocMed_SameViews")
+
+# Convert Binary Variables to numeric except the specified ordinal ones
+data_new <- data[,-1] |>
+  mutate(across(
+    .cols = -all_of(ordinal_columns),
+    .fns = ~ as.numeric(.)
+  ))
+
+# Ensure that the ordinal variables remain ordinal
+data_new <- data_new |>
+  mutate(across(
+    .cols = all_of(ordinal_columns), 
+    .fns = ~ as.factor(.)
+  ))
+
+```
+
+### Distance Calculation
+```{r, warning=FALSE}
+gower_dist <- daisy(data_new, metric = "gower")
+```
+
+### Comparision of Complete and Single Linkage
+
+#### Complete Linkage
+
+Create Dendrogram to Estimate # of Clusters
+```{r}
+#complete linkage hierarchical clustering
+hcl_complete <- hclust(gower_dist,meth='complete')
+
+#dendrogram
+plot(hcl_complete,
+     main= "Complete Linkage Dendrogram",
+     xlab= "HINTS6 Respondents",
+     sub = "Gower's Distance")
+```
+
+Based on the dendrogram it seems that k=10 would be reasonable in this situation
+given that we also have about 29 variables.
+
+```{r}
+# k = 10
+cluster10 <- cutree(hcl_complete, 10)
+data_new$cluster10 <- cluster10
+
+ggplot(data = data_new, aes(x=SocMed_Visited, y= ConfidentInternetHealth, 
+                              color= factor(cluster10))) +
+  geom_point() +
+  labs(
+    title = "Complete Linkage, 10 Clusters",
+    x= "Freq(Social Media Use)",
+    y= "Confidence in Finding Health Information ",
+    color = "Cluster"
+  )
+
+# k = 3 for comparision of very small k 
+cluster3 <- cutree(hcl_complete, 3)
+data_new$cluster3 <- cluster3
+
+ggplot(data = data_new, aes(x=SocMed_Visited, y= ConfidentInternetHealth, 
+                              color= factor(cluster3))) +
+  geom_point() +
+  labs(
+    title = "Complete Linkage, 3 Clusters",
+    x= "Freq(Social Media Use)",
+    y= "Confidence in Finding Health Information ",
+    color = "Cluster"
+  )
+
+
+# k = 20 for comparision of very large k 
+cluster20 <- cutree(hcl_complete, 20)
+data_new$cluster20 <- cluster20
+
+ggplot(data = data_new, aes(x=SocMed_Visited, y= ConfidentInternetHealth, 
+                              color= factor(cluster20))) +
+  geom_point() +
+  labs(
+    title = "Complete Linkage, 20 Clusters",
+    x= "Freq(Social Media Use)",
+    y= "Confidence in Finding Health Information ",
+    color = "Cluster"
+  )
+```
+
+
+#### Single Linkage
+
+Create Dendrogram to Estimate # of Clusters
+```{r}
+#complete linkage hierarchical clustering
+hcl_single <- hclust(gower_dist,meth='single')
+
+#dendrogram
+plot(hcl_single,
+     main= "Single Linkage Dendrogram",
+     xlab= "HINTS6 Respondents",
+     sub = "Gower's Distance")
+```
+
+The dendrogram for the single linkage hierarchical clustering does not
+provide us with clear information about how many clusters to use compared
+to complete linakge clustering. However, based on the dendrogram, about 9-10
+clusters seems reasonable.
+
+```{r}
+# k= 10
+cluster10.single <- cutree(hcl_single, 10)
+data_new$cluster10.single <- cluster10.single
+
+ggplot(data = data_new, aes(x=SocMed_Visited, y= ConfidentInternetHealth, 
+                              color= factor(cluster10.single))) +
+  geom_point() +
+  labs(
+    title = "Single Linkage, 10 Clusters",
+    x= "Freq(Social Media Use)",
+    y= "Confidence in Finding Health Information ",
+    color = "Cluster"
+  )
+
+
+# k= 3
+cluster3.single <- cutree(hcl_single, 3)
+data_new$cluster3.single <- cluster3.single
+
+ggplot(data = data_new, aes(x=SocMed_Visited, y= ConfidentInternetHealth, 
+                              color= factor(cluster3.single))) +
+  geom_point() +
+  labs(
+    title = "Single Linkage, 3 Clusters",
+    x= "Freq(Social Media Use)",
+    y= "Confidence in Finding Health Information ",
+    color = "Cluster"
+  )
+
+
+
+# k= 20
+cluster20.single <- cutree(hcl_single, 20)
+data_new$cluster20.single <- cluster20.single
+
+ggplot(data = data_new, aes(x=SocMed_Visited, y= ConfidentInternetHealth, 
+                              color= factor(cluster20.single))) +
+  geom_point() +
+  labs(
+    title = "Single Linkage, 20 Clusters",
+    x= "Freq(Social Media Use)",
+    y= "Confidence in Finding Health Information ",
+    color = "Cluster"
+  )
+```
+
+Based on the results of the Confidence in Finding Health Information vs
+Freq(Social Media Visits) plots across different K's and between single vs
+complete linkage, it seems as though single linkage assigns more respondents
+in the same cluster compared to complete linkage which is much more diverse
+in its cluster assignment. Again due to the ordinal and binary nature of the
+variables in this dataset, the visualizations are difficult to interpret. 
+Therefore, we look at the tables and crosstables between these methods. We
+see in the tables below that none of the k's I selected produce approximately 
+equal-sized clusters. However, we see that single linkage clustering provides
+the most skewed results as observed in the plots as well. When analyzing the
+the complete linkage clustering method, k = 10 is the solution that produces 
+the most similarly sized clusters but with the majority being distributed
+between across the first 5 clusters.
+
+```{r}
+table(data_new$cluster3)
+table(data_new$cluster10)
+table(data_new$cluster20)
+
+table(data_new$cluster3.single)
+table(data_new$cluster10.single)
+table(data_new$cluster20.single)
+```
+
+Therefore, I assess k= 5 and 6 for complete linkage instead. We see below that 
+overall, k = 6 is the closest to producing the most similarly sized clusters 
+here. Thus, we can conclude that for hclust() using Gower's Distance, k = 6 is
+the most optimal.
+
+```{r}
+cluster5 <- cutree(hcl_complete, 5)
+data_new$cluster5 <- cluster5
+table(data_new$cluster5)
+
+
+cluster6 <- cutree(hcl_complete, 6)
+data_new$cluster6 <- cluster6
+table(data_new$cluster6)
+
+```
+
+## Kmeans
+
+#### Adjust the Variable Type to all Numeric
+```{r}
+data_num <- data |> 
+  mutate(across(
+    .cols = -1, 
+    .fns = ~ as.numeric(.)
+  ))
+```
+
+#### Redo HClust with Numeric Variables
+
+Based on the dendrograms and assessments of the hierarchical clustering 
+methods, it seems that k=6 is the most optimal number of clusters. 
+However, because I have converted the variables into all numeric for this
+analysis, we repeat the above steps but with Eucledian distance instead.
+
+##### Eucledian Distance Calculation
+```{r, warning=FALSE}
+num_dist <- dist(data_num, method = "euclidean")
+```
+
+##### Comparision of Complete and Single Linkage
+
+##### Complete Linkage
+
+Create Dendrogram to Estimate # of Clusters
+```{r}
+#complete linkage hierarchical clustering
+num_complete <- hclust(num_dist,meth='complete')
+
+#dendrogram
+plot(num_complete,
+     main= "Num. Complete Linkage Dendrogram",
+     xlab= "HINTS6 Respondents",
+     sub = "Eucledian Distance")
+```
+
+Based on the dendrogram it seems that k= 5 would be reasonable.
+
+```{r}
+# k = 5
+cluster5 <- cutree(num_complete, 5)
+data_num$cluster5 <- cluster5
+
+# k = 3 for comparison of very small k 
+cluster3 <- cutree(num_complete, 3)
+data_num$cluster3 <- cluster3
+
+
+# k = 10 for comparision of very large k 
+cluster10 <- cutree(num_complete, 10)
+data_num$cluster10 <- cluster10
+
+```
+
+
+##### Single Linkage
+
+Create Dendrogram to Estimate # of Clusters
+```{r}
+#single linkage hierarchical clustering
+num_single <- hclust(num_dist,meth='single')
+
+#dendrogram
+plot(num_single,
+     main= "Num. Single Linkage Dendrogram",
+     xlab= "HINTS6 Respondents",
+     sub = "Eucledian Distance")
+```
+
+The dendrogram for the single linkage hierarchical clustering does not
+provide us with clear information about how many clusters to use compared
+to complete linakge clustering. However, based on the dendrogram, about 2
+clusters seems reasonable.
+
+```{r}
+# k = 2
+cluster2.single <- cutree(num_single, 2)
+data_num$cluster2.single <- cluster2.single
+
+# k = 5 for comparison of very bigger k 
+cluster5.single <- cutree(num_single, 5)
+data_num$cluster5.single <- cluster5.single
+
+# k = 10 for comparision of large k 
+cluster10.single <- cutree(num_single, 10)
+data_num$cluster10.single <- cluster10.single
+```
+
+##### Compare
+```{r}
+table(data_num$cluster5)
+table(data_num$cluster3)
+table(data_num$cluster10)
+
+table(data_num$cluster2.single)
+table(data_num$cluster5.single)
+table(data_num$cluster10.single)
+```
+
+Based on the table above , 3 to 10 clusters utilizing complete linkage would be 
+reasonable to assess in order to find the optimal k-means.
+
+
+### Kmeans analysis using C(g) and Complete Linakge
+```{r}
+# compute the ratio
+optimal.hints <- NbClust(data_num, min.nc = 3, max.nc = 10, 
+                         method = "complete",index = "ch")
+#table of C(g) results
+cg_index <- optimal.hints[["All.index"]]
+cg_table <- data.frame(Cluster= 3:10, Value = cg_index)
+cg_table<- as_tibble(cg_table)
+cg_table
+
+#table of Parition Results
+partition_complete <- optimal.hints[["Best.partition"]]
+table(partition_complete)
+
+
+#plot Partition Results as Frequency
+hist(partition_complete,
+     main= "Frequency of Partition Assignment by Cluster",
+     xlab= "Cluster Group",
+     )
+```
+
+Based on the criterion and utilizing kmeans clustering, the optimal
+number of clusters is 7 as it has the greatest index value of 11416379.74.
+
+
+## Comparing Hclust with Gower's and Kmeans using C(g)
+```{r}
+#optimal gower's
+new_data.6 <- cutree(hcl_complete, 6)
+
+#optimal kmeans
+num_data.7 <- kmeans(data_num, 7)
+
+#table comparison
+table(new_data.6)
+table(num_data.7$cluster)
+
+#compare
+compare <- xtabs(~new_data.6 + num_data.7$cluster)
+compare
+
+#randindex
+rand_index <- phyclust::RRand(new_data.6, num_data.7$cluster)
+rand_index
+```
+There is a large amount of agreement between these two methods, however, our
+adjusted Rand is significantly lower. This indicates that the agreement 
+is non-existent once we make adjustments. As a result, for comparing the
+clusters against our demographic statistics, I continue on with the kmeans
+method as it is more robust to the numeric variables and the difference 
+between the outliers in the cluster groups is smaller.
+
+## Demographics
+
+We want to assess if we observe the distributions of our selected demographics
+(race, sex, income, education, and health status) divide in a way that is 
+consistent with the datasets descriptive statistics. We can do this utilizing
+kmeans.
+
+### Adjust the Dataset
+```{r}
+# add kmeans cluster assignments
+data$kmeans7 <- num_data.7$cluster
+
+
+# select demographics and clean for analysis
+project_demographics <- hints6 |>
+  select(HHID,
+         RaceEthn5,
+         BirthGender,
+         HHInc,
+         EducA, 
+         EverHadCancer,
+         MedConditions_Diabetes,
+         MedConditions_HighBP,
+         MedConditions_HeartCondition,
+         MedConditions_LungDisease,
+         MedConditions_Depression
+  )
+
+# remove any NA's
+project_demographics <- project_demographics |>
+  mutate(across(everything(), ~ na_if(., -9))) |>
+  mutate(across(everything(), ~ na_if(., -7))) |>
+  mutate(across(everything(), ~ na_if(., -6))) |>
+  mutate(across(everything(), ~ na_if(., -5))) |>
+  mutate(across(everything(), ~ na_if(., -4))) |>
+  mutate(across(everything(), ~ na_if(., -2))) |>
+  mutate(across(everything(), ~ na_if(., -1)))
+
+#turn health status into dummy (yes/no)
+project_demographics$HealthStatus <- ifelse(project_demographics$EverHadCancer == 1 | 
+                                project_demographics$MedConditions_Diabetes == 1 | 
+                                project_demographics$MedConditions_HighBP == 1 | 
+                                project_demographics$MedConditions_HeartCondition == 1 | 
+                                project_demographics$MedConditions_LungDisease == 1 | 
+                                project_demographics$MedConditions_Depression == 1, 
+                                1, 
+                                0)
+
+data_final <- inner_join(data, project_demographics, by = "HHID")
+```
+
+### Analysis of Demographics
+```{r}
+#Race
+
+race_compare <- xtabs(~ RaceEthn5 + kmeans7, data = data_final)
+race_compare
+
+#Gender
+
+gender_compare <- xtabs(~ BirthGender + kmeans7, data = data_final)
+gender_compare
+
+#Income
+
+income_compare <- xtabs(~ HHInc + kmeans7, data = data_final)
+income_compare
+
+#Education
+
+educ_compare <- xtabs(~ EducA + kmeans7, data = data_final)
+educ_compare
+
+#Health Status
+
+health_compare <- xtabs(~ HealthStatus + kmeans7, data = data_final)
+health_compare
+```
+
+# Discussion of Results and Summary
+
+Our sample is predominantly white, female,and with almost half holding a college
+degree or above. The majority of our sample either has cancer and/or another
+chronic condition with a median household income at or above $75,000 USD. This 
+demo-graphic breakdown is reflected in our cross tabulations as we see that the 
+majority are White (RaceEthn5 == 1) and remain as such across all clusters
+except 1 and 2. Females maintain their majority in all clusters of almost
+two times that of males. The highest household income group ($75k+) also remains
+the majority in each cluster and so does educational attainment for the
+exception of cluster 3. Lastly, we see that there is a simillar split
+of healthy vs chronic condition, where the majority have a chronic condition in
+each cluster.
+
+This verifies the accuracy of our clusters, maintaining the intial demographic
+distributions as expected in the beginning of this study. The kmeans method
+was the best method compared to hclust with Gower's Distance or that of
+Euclidean distance. This project aimed to assess the best unsupervised 
+machine learning method that would allow us to maintain the structure of
+our original data and receive the most information. If possible, it would be
+best to convert variables into their numeric form but more projects
+utilizing Gower's Distance for mixed datasets provides an avenue for further
+analysis of survey data.
+
+
+
+
